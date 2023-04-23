@@ -1,16 +1,16 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import classes from "./RosterModule.css";
-import {getCourseDetailsAsync, getCurrentCourseStudentsAsync} from "../../redux/features/courseSlice";
+import {getCourseDetailsAsync, getCoursesAsync, getCurrentCourseStudentsAsync} from "../../redux/features/courseSlice";
 
 const Roster = (props) => {
     const dispatch = useDispatch()
     const { currentCourse } = useSelector((state) => state.courses)
     const courseParse = window.location.pathname;
-    const courseId = courseParse.split("/")[2];
     const url = `${process.env.REACT_APP_URL}/manage/professor/courses`
     const { currentCourseStudents } = useSelector((state) => state.courses)
     let navigate = useNavigate()
+    let { courseId } = useParams()
     const [showModal, setShow] = useState(false)
     const csvFormData = new FormData()
     /* Might need to change this, I don't remember how the URL is formatted
@@ -23,67 +23,101 @@ const Roster = (props) => {
         {name: 'James', student_id: 'jlafarr', team: 'blah'}
     ]);
 
+    useEffect(() => {
+        dispatch(getCurrentCourseStudentsAsync(courseId))
+    }, [dispatch, courseId])
+
+    const [formData, setFormData] = useState({
+        Name: '',
+        Email: '',
+    })
+
     /**
-     * Retrieves all the students in the course and searches through the JSON and returns the student
+     * Retrieves all the students in the course and searches through the data and returns the student
      */
-    const searchStudent = {
-        searchStudents: async function(courseID, searchText) {
-            const SearchStudentUrl = `${url}/course/${courseId}/students`
-            const response = await fetch(SearchStudentUrl);
-            const data = await response.json();
-            const filteredData = data.filter(student => student.name.includes(searchText));
-            return filteredData.map(student => student.name);
-        }
+    const [searchTerm, setSearchTerm] = useState('');
+
+    const handleSearch = (event) => {
+        setSearchTerm(event.target.value);
     };
 
-    /**
-     * This function first creates an empty object selectedStudents to keep track of which students are selected.
-     * It then creates a dropdown menu with options for each student with checkbox element with document.createElement().
-     * The checkbox has its value to the student name, When the checkbox is clicked, the student name is added to the
-     * selectedStudents object .When the checkbox is unchecked, the student is removed
-     * from the selectedStudents object with delete selectedStudents[name].And returns the filtered Students
-     */
+    const searchStudent = currentCourseStudents.filter((student) => {
+        return (
+            student &&
+            (student.first_name
+                ? student.first_name.toLowerCase().includes(searchTerm.toLowerCase())
+                : '') ||
+            (student.last_name
+                ? student.last_name.toLowerCase().includes(searchTerm.toLowerCase())
+                : '') ||
+            (student.student_id
+                ? student.student_id.toLowerCase().includes(searchTerm.toLowerCase())
+                : '') ||
+            (student.team !== null
+                ? student.team.toString().includes(searchTerm.toLowerCase())
+                : '')
+        );
+    });
 
+    /**
+     * Function uses gets the currentCourseStudents data and maps over it to get an array of student names.
+     * It then creates a dropdown and checkboxes for each student name, and adds event listeners to the checkboxes
+     * to update the selectedStudents object
+     */
     const filterStudent = {
-        filterStudents: async function(courseID) {
-            const FilterStudentUrl = `${url}/course/${courseId}/students`
-            const response = await fetch(FilterStudentUrl);
-            const data = await response.json();
-            const studentNames = data.map(student => student.name);
+        filterStudents: async function(courseId) {
+            const studentData = useSelector(state => state.courses.currentCourseStudents);
+            const studentNames = studentData.map(student => student.first_name + ' ' + student.last_name);
             const selectedStudents = {};
-            const dropdown = document.createElement("select");
-            studentNames.forEach(name => {
-                const option = document.createElement("option");
-                option.value = name;
-                option.text = name;
-                dropdown.add(option);
-                const checkbox = document.createElement("input");
-                checkbox.type = "checkbox";
+            const dropdown = document.createElement('select');
+            dropdown.addEventListener('change', () => {
+                const selectedOptions = Array.from(dropdown.options).filter(option => option.selected);
+                const selectedNames = selectedOptions.map(option => option.value);
+                studentCheckboxes.forEach(checkbox => {
+                    checkbox.checked = selectedNames.includes(checkbox.value);
+                    if (checkbox.checked) {
+                        selectedStudents[checkbox.value] = true;
+                    } else {
+                        delete selectedStudents[checkbox.value];
+                    }
+                });
+            });
+            const studentCheckboxes = studentNames.map(name => {
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
                 checkbox.value = name;
-                checkbox.addEventListener("change", event => {
+                checkbox.addEventListener('change', event => {
                     if (event.target.checked) {
                         selectedStudents[name] = true;
                     } else {
                         delete selectedStudents[name];
                     }
+                    const selectedNames = Object.keys(selectedStudents);
+                    const selectedOptions = Array.from(dropdown.options).filter(option => selectedNames.includes(option.value));
+                    selectedOptions.forEach(option => option.selected = true);
                 });
-                const label = document.createElement("label");
+                const label = document.createElement('label');
                 label.textContent = name;
                 label.insertBefore(checkbox, label.firstChild);
                 document.body.appendChild(label);
+                return checkbox;
             });
-            const button = document.createElement("button");
-            button.textContent = "Filter";
+            const button = document.createElement('button');
+            button.style.display = 'none';
             const filteredStudents = new Promise(resolve => {
-                button.addEventListener("click", () => {
-                    const filteredData = data.filter(student => selectedStudents[student.name]);
+                const filterData = () => {
+                    const filteredData = studentData.filter(
+                        student => selectedStudents[student.first_name + ' ' + student.last_name]
+                    );
                     resolve(filteredData);
-                });
+                };
+                dropdown.addEventListener('change', filterData);
+                studentCheckboxes.forEach(checkbox => checkbox.addEventListener('change', filterData));
             });
             document.body.appendChild(dropdown);
             document.body.appendChild(button);
             return filteredStudents;
-        }
+        },
     };
 
     /**
@@ -140,6 +174,35 @@ const Roster = (props) => {
             })
         dispatch(getCourseDetailsAsync(courseId))
         navigate('/professor/' + courseId)
+    }
+
+    const updateCourse = async (data) => {
+        const finalData = { ...data, course_id: currentCourse.course_id }
+
+        await axios
+            .put(updateUrl, finalData)
+            .then((res) => {
+                courseId = res.data
+                window.alert('Course successfully updated!')
+                if (csvFormData.get('csv_file') != null) {
+                    uploadCsv()
+                } else {
+                    dispatch(getCourseDetailsAsync(res.data))
+                    navigate('/professor/' + res.data)
+                }
+            })
+            .catch((e) => {
+                console.error(e)
+                window.alert('Error updating course. Please try again.')
+            })
+    }
+
+    const fileChangeHandler = (event) => {
+        let file = event.target.files[0]
+        const renamedFile = new File([file], currentCourse.course_id + '.csv', {
+            type: file.type,
+        })
+        csvFormData.set('csv_file', renamedFile)
     }
 
     /**
